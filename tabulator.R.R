@@ -23,7 +23,8 @@ ui <- fluidPage(
       tabsetPanel(type = "tabs",
                   tabPanel("Heatmap", plotOutput("heatmap")),
                   tabPanel("Rank-Abundance", plotOutput("rankabund")),
-                  tabPanel("Mean-Variance", plotOutput("meanvar"))
+                  tabPanel("Mean-Variance", plotOutput("meanvar")),
+                  tabPanel("ANOSIM", verbatimTextOutput("anosim"))
       )
   )
 )
@@ -119,7 +120,8 @@ library(vegan)
   output$rankabund <- renderPlot({
     final <- datasetInput()
     par(mar = c(5.1, 4.1, 0, 1))
-    plot(sort(apply(final, 1, mean), decreasing=T), lwd=3, col="dodgerblue", type="l"
+    plot(sort(apply(final, 1, mean), decreasing=T), lwd=3, col="dodgerblue", type="l")
+    points(sort(apply(final, 1, mean), decreasing=T), col="dodgerblue"
     )
   })
   
@@ -132,6 +134,18 @@ library(vegan)
     x1 <- as.numeric(mean[order(mean, decreasing=T)])
     x2 <- as.numeric(stand[order(mean, decreasing=T)])
     plot(x1, x2, col="dodgerblue", xlab="Variance", ylab="Mean Abundance")
+  })
+  
+  output$anosim <- renderText({
+    final <- datasetInput()
+    metadata <- as.data.frame(metadataInput())
+    ano <- anosim(t(final), grouping=as.factor(metadata$Value))
+    call <- paste("Call:", ano$call, collapse=" ")
+    significance <- paste("Significance:", ano$signif, collapse=" ")
+    statistic <- paste("ANOSIM Statistic R:", ano$statistic, collapse=" ")
+    perm <- paste("Permutations:", ano$permutations, collapse=" ")
+    
+    return(paste(c(call, significance, statistic, perm), collapse="\n"))
   })
   
   # static heatmap download								
