@@ -1,35 +1,40 @@
 
-library(gplots)
+
 ui <- fluidPage(
   
   pageWithSidebar(headerPanel('Count Table Transformations'),
   sidebarPanel(
     fileInput("filename", "Choose Count Table File to Upload:", accept = c('.csv')),
     fileInput("metadata", "Choose Metadata File to Upload:", accept = c('.csv')),
-    selectInput("transformation", "Transformation to apply:", c("Proportion", "DESeq2", "None")),
-    selectInput("lowColor", "Low Value:", c("dodgerblue", "green", "blue", "purple", "red", "orange", "yellow", "white", "black")),
-    selectInput("midColor", "Mid Value:", c("none", "black", "green", "blue", "purple", "red", "orange", "yellow", "white")),
-    selectInput("highColor", "High Value:", c("firebrick", "red", "orange", "yellow", "green", "blue", "purple", "orange", "white", "black")),    
-    selectInput("dendrogram", "Apply Clustering:", c("none", "row", "column", "both")),
+    selectInput("transformation", "Transformation to apply:", c("Proportion", "log2", "DESeq2", "None")),
+    selectInput("colorpal", "Color Palette:", c("default", "BrBG", "PiYG", "PRGn", "PuOr", "RdBu", "RdGy", "RdYlBu", "RdYlGn")),    
+    selectInput("rowclust", "Cluster Rows?", c("TRUE", "FALSE")),
+    selectInput("colclust", "Cluster Columns?", c("TRUE", "FALSE")),
     selectInput("numitems", "Number of features to show in heatmap:", c("50", "100", "500", "1000")),
-    selectInput("distanceMethod", "Distance Metric:", c("euclidean", "maximum", "manhattan", "canberra", "binary", "minkowski")),
+    selectInput("distanceMethod", "Distance Metric for Heatmap:", c("correlation", "euclidean", "maximum", "manhattan", "canberra", "binary", "minkowski", "bray", "kulczynski", "jaccard", "gower", "morisita", "horn", "mountford")),
+    selectInput("distanceMethod2", "Distance Metric for Anosim:", c("euclidean", "maximum", "manhattan", "canberra", "binary", "minkowski")),
     selectInput("agglomerationMethod", "Linkage Algorithm:", c("complete", "single", "average", "centroid", "median", "mcquitty", "ward.D", "ward.D2")),
     #selectInput("scale", "Apply Scaling:", c("row", "column", "none")),
     downloadButton("downloadHeatmap", "Download Heatmap")
   ),
   mainPanel(
-    plotOutput('plot1')
+    #plotOutput('plot1')
+	      # Output: Tabset w/ plot, summary, and table ----
+      tabsetPanel(type = "tabs",
+                  tabPanel("Heatmap", plotOutput("heatmap")),
+                  tabPanel("Rank-Abundance", plotOutput("rankabund")),
+                  tabPanel("Mean-Variance", plotOutput("meanvar"))
+      )
   )
 )
 )
 
-
 server <- function(input, output, session) {
 library(data.table)
-library(gplots)
+library(pheatmap)
 library(DESeq2)
-library(WGCNA)
 library(RColorBrewer)
+library(vegan)
   
     datasetInput <- reactive({
     validate(
@@ -37,84 +42,120 @@ library(RColorBrewer)
     )
     inFile <- input$filename
     if (is.null(inFile)) return(NULL)
-    fread(inFile$datapath)
+    datatable <- as.data.frame(fread(inFile$datapath))
+    
+    if(input$transformation == "DESeq2") {
+      final <- varianceStabilizingTransformation(round(as.matrix(datatable[-1]+1)), fitType="mean")
+    }
+    if(input$transformation == "log2") {
+      final <- log10(round(as.matrix(datatable[-1]+1)))
+    }
+    if (input$transformation == "Proportion") {
+      final <- as.matrix(scale(datatable[-1], scale=colSums(datatable[-1]), center=F))
+    } 
+    if (input$transformation == "None") {
+      final <- as.matrix(datatable[-1])
+    } 
+    
+    print(input$numitems)
+    if (as.numeric(dim(final)[1]) > as.numeric(input$numitems)) {
+      sorted_final <- final[order(rowSums(final), decreasing=T),]
+      newfinal <- sorted_final[1:as.numeric(input$numitems),]
+    }
+    else { newfinal <- final}
+    
+    return(as.matrix(newfinal))
 })
 
     metadataInput <- reactive({    
-   validate(
+    validate(
       need(input$metadata != 0, "To begin drawing a heatmap, please select your metadata file")
     )
       inFile2 <- input$metadata
       if (is.null(inFile2)) return(NULL)
-      read.table(inFile2$datapath, sep="\t", row.names=1)
+      md <- read.table(inFile2$datapath, sep="\t", row.names=1, header=T)
+   #   return(md)
   })
   
   # Combine the selected variables into a new data frame
-  output$plot1 <- renderPlot({
-    palette(c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3",
-              "#FF7F00", "#FFFF33", "#A65628", "#F781BF", "#999999"))
+  output$heatmap <- renderPlot({
+    
+    if (input$colorpal == "default") {
+      palette <- colorRampPalette(rev(c("#D73027", "#FC8D59", "#FEE090", "#FFFFBF", "#E0F3F8", "#91BFDB", "#4575B4")))(100)
+    }
+    else {
+      palette <- brewer.pal(9, input$colorpal)  
+    }
+    
+    final <- datasetInput()
+    
+    if (input$distanceMethod %in% c("bray", "kulczynski", "jaccard", "gower", "morisita", "horn", "mountford")) {
+      print(min(final))
+      print(input$distanceMethod)
+      distance1 <- vegdist(final, method=input$distanceMethod)
+      distance2 <- vegdist(t(final), method=input$distanceMethod)
+    }
+    else {
+      distance1 <- input$distanceMethod
+      distance2 <- input$distanceMethod
+    }
     
     par(mar = c(5.1, 4.1, 0, 1))
-    datatable <- as.data.frame(datasetInput())
-    meta <- as.data.frame(metadataInput())
-    vector <- as.character(meta[,6])
-    print(vector)
-    print(length(vector))
-    #print(row.names(meta))
-    #print(colnames(datatable)[2:length(colnames(datatable))])
-    features <- as.character(vector[match(row.names(meta), colnames(datatable)[2:length(colnames(datatable))])])
-    print(features)
-    colors <- labels2colors(features)
-    print(colors)
-    
-    if(input$transformation == "DESeq2") {
-      final <- varianceStabilizingTransformation(as.matrix(datatable[-1]+1))
-      }
-    else if (input$transformation == "Proportion") {
-      final <- as.matrix(scale(datatable[-1], scale=colSums(datatable[-1]), center=F))
-    } 
-    else {
-      final <- as.matrix(datatable[-1])
-    } 
-    print(length(colors))
-    print(dim(final))
-     
-    heatmap.2(final,
-    trace="none",
-    scale = "none", #input$scale,
-    dendrogram = input$dendrogram,
-    hclustfun = function(x) hclust(x, method = input$agglomerationMethod),
-    ColSideColors = colors,
-    key=T,
-    distfun = function(x) dist(x, method = input$distanceMethod),
-    Rowv = if (input$dendrogram == "both" | input$dendrogram == "row") TRUE else FALSE, 
-    Colv = if (input$dendrogram == "both" | input$dendrogram == "column") TRUE else FALSE,
-    col = if (input$midColor == "none") colorpanel(256, low = input$lowColor, high = input$highColor) else colorpanel(256, low = input$lowColor, mid = input$midColor, high = input$highColor)
+    metadata <- as.data.frame(metadataInput())
+    print(colSums(final))
+    print(min(final))
+    pheatmap(final, 
+             cluster_cols = as.logical(input$colclust), 
+             cluster_row=as.logical(input$rowclust), 
+             clustering_distance_rows=distance1,
+             clustering_distance_cols=distance2,
+             clustering_method=input$agglomerationMethod,
+             border_color=FALSE,
+             annotation_col=metadata,
+             col=palette
     )
-    legend(1,1, legend=unique(features), fill=unique(colors))
+  })
+  
+  output$rankabund <- renderPlot({
+    final <- datasetInput()
+    par(mar = c(5.1, 4.1, 0, 1))
+    plot(sort(apply(final, 1, mean), decreasing=T), lwd=3, col="dodgerblue", type="l"
+    )
+  })
+  
+  output$meanvar <- renderPlot({
+    final <- datasetInput()
+    print("working")
+    par(mar = c(5.1, 4.1, 0, 1))
+    mean <- apply(final, 1, mean)
+    stand <- apply(final, 1, var)
+    x1 <- as.numeric(mean[order(mean, decreasing=T)])
+    x2 <- as.numeric(stand[order(mean, decreasing=T)])
+    plot(x1, x2, col="dodgerblue", xlab="Variance", ylab="Mean Abundance")
   })
   
   # static heatmap download								
-  output$downloadHeatmap <- downloadHandler(
-    filename <- function() {
-      paste0(basename(file_path_sans_ext(input$filename)), '_heatmap', '.png', sep='')
-    },
-    content <- function(file) {
-      png(file)
-      tiff(
-        file,
-        width = 4000,
-        height = 2000,
-        units = "px",
-        pointsize = 12,
-        res = 300
-      )
-      staticHeatmap()
-      dev.off()
-    }
-  )
+#  output$downloadHeatmap <- downloadHandler(
+#    filename <- function() {
+#      paste0(basename(file_path_sans_ext(input$filename)), '_heatmap', '.png', sep='')
+#    },
+#    content <- function(file) {
+#      png(file)
+#      tiff(
+#        file,
+#        width = 4000,
+#        height = 2000,
+#        units = "px",
+#        pointsize = 12,
+#        res = 300
+#      )
+#      staticHeatmap()
+#      dev.off()
+#    }
+#  )
   
 }
+
 
 
 
